@@ -1,0 +1,15 @@
+{
+  "name": "SAT Prep",
+  "short_name": "SAT Prep",
+  "description": "Practice SAT Math and English questions anywhere, at easy, medium, and hard levels.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0B1220",
+  "theme_color": "#2454FF",
+  "icons": [
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}
