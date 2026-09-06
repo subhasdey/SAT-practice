@@ -1,6 +1,7 @@
 // SAT Prep — app logic (vanilla JS, no build step)
 
-const STORAGE_KEY = 'satPrepStats_v1';
+const STATS_ID = 'stats';
+const LEGACY_STORAGE_KEY = 'satPrepStats_v1';
 const LETTERS = ['A', 'B', 'C', 'D'];
 
 const state = {
@@ -11,11 +12,7 @@ const state = {
 
 // ---------- Stats persistence ----------
 
-function loadStats() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch (e) { /* corrupted storage, fall through to defaults */ }
+function defaultStats() {
   return {
     totals: { attempted: 0, correct: 0 },
     bySubject: {},
@@ -25,8 +22,30 @@ function loadStats() {
   };
 }
 
+let statsCache = null;
+
+async function initStats() {
+  let stored = await getRecord(STATS_ID);
+  if (!stored) {
+    try {
+      const legacy = localStorage.getItem(LEGACY_STORAGE_KEY);
+      if (legacy) {
+        stored = JSON.parse(legacy);
+        await putRecord(STATS_ID, stored);
+        localStorage.removeItem(LEGACY_STORAGE_KEY);
+      }
+    } catch (e) { /* ignore corrupt legacy data */ }
+  }
+  statsCache = stored || defaultStats();
+}
+
+function loadStats() {
+  return statsCache || defaultStats();
+}
+
 function saveStats(stats) {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(stats)); } catch (e) { /* storage unavailable */ }
+  statsCache = stats;
+  putRecord(STATS_ID, stats).catch(() => { /* best-effort persistence */ });
 }
 
 function bump(bucket, key, correct) {
@@ -46,6 +65,98 @@ function recordAnswer(stats, q, correct) {
 function pct(bucket) {
   if (!bucket || bucket.attempted === 0) return null;
   return Math.round((bucket.correct / bucket.attempted) * 100);
+}
+
+// Rough, original approximation for motivational tracking only — not derived from
+// or claiming to match any official scoring table. Curves the top of the range
+// slightly so accuracy gains near 100% still read as meaningful score gains.
+function estimateScaledScore(accuracyFraction) {
+  const clamped = Math.min(1, Math.max(0, accuracyFraction));
+  const scaled = 200 + 600 * Math.pow(clamped, 0.8);
+  return Math.round(scaled / 10) * 10;
+}
+
+function computeInsights(stats) {
+  const insights = [];
+  const mathAcc = pct(stats.bySubject.math);
+  const engAcc = pct(stats.bySubject.english);
+  const mathN = stats.bySubject.math ? stats.bySubject.math.attempted : 0;
+  const engN = stats.bySubject.english ? stats.bySubject.english.attempted : 0;
+
+  if (mathAcc !== null && engAcc !== null && mathN >= 5 && engN >= 5) {
+    if (engAcc - mathAcc >= 10) {
+      insights.push({ type: 'focus', text: `Math accuracy (${mathAcc}%) is trailing English (${engAcc}%) — weight your next few sessions toward Math.` });
+    } else if (mathAcc - engAcc >= 10) {
+      insights.push({ type: 'focus', text: `English accuracy (${engAcc}%) is trailing Math (${mathAcc}%) — weight your next few sessions toward English.` });
+    }
+  }
+
+  const easy = stats.byDifficulty.easy, hard = stats.byDifficulty.hard;
+  const easyAcc = pct(easy), hardAcc = pct(hard);
+  if (easyAcc !== null && easy.attempted >= 5 && easyAcc < 80) {
+    insights.push({ type: 'focus', text: `Easy-tier accuracy is ${easyAcc}% — shore up fundamentals before pushing further into Medium/Hard questions.` });
+  } else if (easyAcc !== null && hardAcc !== null && hard.attempted >= 5 && easyAcc - hardAcc >= 25) {
+    insights.push({ type: 'focus', text: `Hard-tier accuracy (${hardAcc}%) lags well behind Easy (${easyAcc}%) — expected, but multi-step problem practice will close that gap fastest.` });
+  }
+
+  const topicEntries = Object.entries(stats.byTopic)
+    .filter(([, v]) => v.attempted >= 3)
+    .map(([topic, v]) => ({ topic, pct: pct(v), attempted: v.attempted }));
+  topicEntries.slice().sort((a, b) => a.pct - b.pct).slice(0, 2).forEach(t => {
+    if (t.pct < 70) insights.push({ type: 'focus', text: `${t.topic}: ${t.pct}% correct over ${t.attempted} questions — a clear priority topic.` });
+  });
+  const best = topicEntries.slice().sort((a, b) => b.pct - a.pct)[0];
+  if (best && best.pct === 100 && best.attempted >= 3) {
+    insights.push({ type: 'strength', text: `${best.topic}: perfect record over ${best.attempted} questions — a real strength, no need to over-practice here.` });
+  }
+
+  const lastExam = stats.sessions.find(s => s.difficulty === 'exam');
+  if (lastExam) {
+    const unanswered = 58 - lastExam.attempted;
+    if (unanswered >= 5) {
+      insights.push({ type: 'pacing', text: `Your last timed test left ${unanswered} questions unanswered — pacing is the priority: practice moving on from stuck questions faster.` });
+    }
+  }
+
+  if (insights.length === 0) {
+    insights.push({ type: 'info', text: 'Keep practicing — insights appear here once you have at least 5 answered questions in an area.' });
+  }
+  return insights;
+}
+
+function examInsights(sectionsSummary) {
+  const insights = [];
+  const [noCalc, calc] = sectionsSummary;
+  const noCalcUnanswered = noCalc.total - noCalc.attempted;
+  const calcUnanswered = calc.total - calc.attempted;
+
+  if (noCalcUnanswered >= 3) {
+    insights.push({ type: 'pacing', text: `You left ${noCalcUnanswered} No-Calculator questions unanswered — at 75 seconds/question on average, practice recognizing when to guess and move on.` });
+  }
+  if (calcUnanswered >= 5) {
+    insights.push({ type: 'pacing', text: `You left ${calcUnanswered} Calculator-section questions unanswered — that section allows more time per question (~87 sec), so pacing there should improve fastest with practice.` });
+  }
+
+  const noCalcAcc = noCalc.attempted ? Math.round((noCalc.correct / noCalc.attempted) * 100) : null;
+  const calcAcc = calc.attempted ? Math.round((calc.correct / calc.attempted) * 100) : null;
+  if (noCalcAcc !== null && calcAcc !== null) {
+    if (calcAcc - noCalcAcc >= 15) {
+      insights.push({ type: 'focus', text: `No-Calculator accuracy (${noCalcAcc}%) is noticeably behind Calculator accuracy (${calcAcc}%) — build more comfort doing algebra by hand.` });
+    } else if (noCalcAcc - calcAcc >= 15) {
+      insights.push({ type: 'focus', text: `Calculator-section accuracy (${calcAcc}%) is behind No-Calculator (${noCalcAcc}%) — this often means rushing; slow down and double-check entries.` });
+    }
+  }
+
+  if (insights.length === 0) {
+    insights.push({ type: 'info', text: 'Balanced performance across both sections — keep practicing at this pace and volume to build consistency.' });
+  }
+  return insights;
+}
+
+function renderInsights(insights) {
+  return insights.map(i => `
+    <div class="insight"><span class="ilabel ${i.type}">${i.type}</span>${i.text}</div>
+  `).join('');
 }
 
 // ---------- Question selection ----------
@@ -92,6 +203,12 @@ function renderHome() {
   const overall = pct(stats.totals);
   const mathPct = pct(stats.bySubject.math);
   const engPct = pct(stats.bySubject.english);
+  const mathN = stats.bySubject.math ? stats.bySubject.math.attempted : 0;
+  const engN = stats.bySubject.english ? stats.bySubject.english.attempted : 0;
+
+  const mathScaled = (mathPct !== null && mathN >= 5) ? estimateScaledScore(mathPct / 100) : null;
+  const engScaled = (engPct !== null && engN >= 5) ? estimateScaledScore(engPct / 100) : null;
+  const composite = (mathScaled !== null && engScaled !== null) ? mathScaled + engScaled : null;
 
   const weakTopics = Object.entries(stats.byTopic)
     .filter(([, v]) => v.attempted >= 3)
@@ -99,8 +216,26 @@ function renderHome() {
     .sort((a, b) => a.pct - b.pct)
     .slice(0, 3);
 
+  const insights = computeInsights(stats);
+
   root.innerHTML = `
     ${topbar('SAT Prep')}
+    ${resumableExam ? `
+    <div class="card">
+      <div class="section-label">Resume Timed Test</div>
+      <p style="margin:0 0 12px; font-size:14px; color:var(--muted);">
+        Section ${resumableExam.sectionIndex + 1}: ${resumableExam.sections[resumableExam.sectionIndex].name} — Question ${resumableExam.index + 1} of ${resumableExam.sections[resumableExam.sectionIndex].questions.length}
+      </p>
+      <button class="btn" id="resume-exam-btn">Resume${resumableExam.sectionEndAt ? ` · ${formatTime(Math.max(0, Math.round((resumableExam.sectionEndAt - Date.now()) / 1000)))} left` : ''}</button>
+    </div>` : ''}
+    ${resumablePractice ? `
+    <div class="card">
+      <div class="section-label">Resume Practice</div>
+      <p style="margin:0 0 12px; font-size:14px; color:var(--muted);">
+        Question ${resumablePractice.index + 1} of ${resumablePractice.questions.length}
+      </p>
+      <button class="btn" id="resume-practice-btn">Resume Practice</button>
+    </div>` : ''}
     <div class="card">
       <div class="section-label">Overall accuracy</div>
       <div class="big-score">${overall === null ? '—' : overall + '%'}</div>
@@ -117,6 +252,19 @@ function renderHome() {
         <span class="stat-value">${engPct === null ? '—' : engPct + '%'}</span>
       </div>
     </div>
+    <div class="card">
+      <div class="section-label">Estimated SAT Score</div>
+      <div class="big-score">${composite !== null ? composite : '—'} <span style="font-size:14px; color:var(--muted); font-weight:600;">/ 1600</span></div>
+      <div class="stat-row">
+        <span class="stat-label">Math</span>
+        <span class="stat-value">${mathScaled !== null ? mathScaled : '—'} / 800</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">English</span>
+        <span class="stat-value">${engScaled !== null ? engScaled : '—'} / 800</span>
+      </div>
+      <p class="score-disclaimer">Rough estimate from your practice accuracy, for motivation and tracking only — not an official score predictor. Needs at least 5 answered questions per subject.</p>
+    </div>
     ${weakTopics.length ? `
     <div class="card">
       <div class="section-label">Focus areas</div>
@@ -127,6 +275,10 @@ function renderHome() {
         </div>
       `).join('')}
     </div>` : ''}
+    <div class="card">
+      <div class="section-label">Key Insights</div>
+      ${renderInsights(insights)}
+    </div>
     <button class="btn" id="start-btn">Start Practice</button>
     <button class="btn secondary" id="exam-btn">Timed Math Test (Official Format)</button>
     <div class="footer-note">SAT Prep · practice anywhere, even offline</div>
@@ -139,6 +291,10 @@ function renderHome() {
     state.screen = 'examIntro';
     render();
   };
+  const resumeExamBtn = document.getElementById('resume-exam-btn');
+  if (resumeExamBtn) resumeExamBtn.onclick = () => resumeExam();
+  const resumePracticeBtn = document.getElementById('resume-practice-btn');
+  if (resumePracticeBtn) resumePracticeBtn.onclick = () => resumePractice();
 }
 
 function renderSetup() {
@@ -213,6 +369,45 @@ function startSession() {
     answered: false,
     selectedIndex: null,
     topicTally: {}, // per-session breakdown
+  };
+  resumablePractice = null;
+  state.screen = 'session';
+  render();
+  startTimer();
+  persistPracticeProgress();
+}
+
+function persistPracticeProgress() {
+  if (!state.session) return;
+  const snapshot = {
+    questions: state.session.questions,
+    index: state.session.index,
+    correctCount: state.session.correctCount,
+    answered: state.session.answered,
+    selectedIndex: state.session.selectedIndex,
+    topicTally: state.session.topicTally,
+    startTime: state.session.startTime,
+  };
+  putRecord('practiceProgress', snapshot).catch(() => { /* best-effort */ });
+}
+
+function clearPracticeProgress() {
+  resumablePractice = null;
+  deleteRecord('practiceProgress').catch(() => { /* best-effort */ });
+}
+
+function resumePractice() {
+  const saved = resumablePractice;
+  resumablePractice = null;
+  state.session = {
+    questions: saved.questions,
+    index: saved.index,
+    correctCount: saved.correctCount,
+    startTime: saved.startTime,
+    elapsed: Math.floor((Date.now() - saved.startTime) / 1000),
+    answered: saved.answered,
+    selectedIndex: saved.selectedIndex,
+    topicTally: saved.topicTally,
   };
   state.screen = 'session';
   render();
@@ -310,6 +505,7 @@ function answerQuestion(selectedIndex) {
     </div>
   `;
   document.getElementById('next-btn').style.display = 'block';
+  persistPracticeProgress();
 }
 
 function nextQuestion() {
@@ -321,6 +517,7 @@ function nextQuestion() {
   s.index += 1;
   s.answered = false;
   s.selectedIndex = null;
+  persistPracticeProgress();
   render();
 }
 
@@ -338,6 +535,7 @@ function endSession() {
   });
   stats.sessions = stats.sessions.slice(0, 20);
   saveStats(stats);
+  clearPracticeProgress();
 
   state.screen = 'result';
   render();
@@ -445,23 +643,75 @@ function startExam() {
     answers: sections.map(sec => new Array(sec.questions.length).fill(null)),
     index: 0,
     secondsLeft: sections[0].timeLimit,
+    sectionEndAt: null,
     timerHandle: null,
   };
+  resumableExam = null;
   state.screen = 'examSection';
   render();
   startExamTimer();
 }
 
+function persistExamProgress() {
+  if (!state.exam) return;
+  const snapshot = {
+    sections: state.exam.sections,
+    sectionIndex: state.exam.sectionIndex,
+    answers: state.exam.answers,
+    index: state.exam.index,
+    sectionEndAt: state.exam.sectionEndAt,
+  };
+  putRecord('examProgress', snapshot).catch(() => { /* best-effort */ });
+}
+
+function clearExamProgress() {
+  resumableExam = null;
+  deleteRecord('examProgress').catch(() => { /* best-effort */ });
+}
+
+function resumeExam() {
+  const saved = resumableExam;
+  resumableExam = null;
+  const section = saved.sections[saved.sectionIndex];
+  state.exam = {
+    sections: saved.sections,
+    sectionIndex: saved.sectionIndex,
+    answers: saved.answers,
+    index: saved.index,
+    secondsLeft: saved.sectionEndAt ? Math.max(0, Math.round((saved.sectionEndAt - Date.now()) / 1000)) : section.timeLimit,
+    sectionEndAt: saved.sectionEndAt || null,
+    timerHandle: null,
+  };
+  if (!saved.sectionEndAt) {
+    // Tab was closed on the between-sections break screen — resume there instead of mid-question.
+    state.screen = 'examSectionBreak';
+    render();
+    return;
+  }
+  state.screen = 'examSection';
+  render();
+  if (state.exam.secondsLeft <= 0) {
+    finishExamSection();
+  } else {
+    startExamTimer();
+  }
+}
+
 function startExamTimer() {
   stopExamTimer();
+  if (!state.exam.sectionEndAt) {
+    state.exam.sectionEndAt = Date.now() + state.exam.secondsLeft * 1000;
+  }
+  persistExamProgress();
   state.exam.timerHandle = setInterval(() => {
-    state.exam.secondsLeft -= 1;
+    const secondsLeft = Math.max(0, Math.round((state.exam.sectionEndAt - Date.now()) / 1000));
+    state.exam.secondsLeft = secondsLeft;
     const el = document.getElementById('exam-timer');
     if (el) {
-      el.textContent = formatTime(Math.max(0, state.exam.secondsLeft));
-      el.classList.toggle('timer-warn', state.exam.secondsLeft <= 60);
+      el.textContent = formatTime(secondsLeft);
+      el.classList.toggle('timer-warn', secondsLeft <= 60);
     }
-    if (state.exam.secondsLeft <= 0) {
+    if (secondsLeft <= 0) {
       finishExamSection();
     }
   }, 1000);
@@ -517,13 +767,14 @@ function renderExamSection() {
     const btn = e.target.closest('.choice');
     if (!btn) return;
     exam.answers[exam.sectionIndex][exam.index] = Number(btn.dataset.index);
+    persistExamProgress();
     render();
   };
   document.getElementById('exam-back-q').onclick = () => {
-    if (exam.index > 0) { exam.index -= 1; render(); }
+    if (exam.index > 0) { exam.index -= 1; persistExamProgress(); render(); }
   };
   document.getElementById('exam-next-q').onclick = () => {
-    if (exam.index + 1 < total) { exam.index += 1; render(); }
+    if (exam.index + 1 < total) { exam.index += 1; persistExamProgress(); render(); }
     else { finishExamSection(); }
   };
   document.getElementById('exam-end-btn').onclick = () => finishExam();
@@ -536,6 +787,8 @@ function finishExamSection() {
     exam.sectionIndex += 1;
     exam.index = 0;
     exam.secondsLeft = exam.sections[exam.sectionIndex].timeLimit;
+    exam.sectionEndAt = null;
+    persistExamProgress();
     state.screen = 'examSectionBreak';
     render();
   } else {
@@ -564,6 +817,7 @@ function renderExamSectionBreak() {
 
 function finishExam() {
   stopExamTimer();
+  clearExamProgress();
   const exam = state.exam;
 
   const stats = loadStats();
@@ -603,6 +857,8 @@ function finishExam() {
 function renderExamResult() {
   const exam = state.exam;
   const { sectionsSummary, totalCorrect, totalQuestions } = exam.summary;
+  const scaledScore = estimateScaledScore(totalCorrect / totalQuestions);
+  const takeaways = examInsights(sectionsSummary);
 
   const reviewHtml = exam.sections.map((sec, si) => `
     <div class="section-label" style="margin-top:16px;">Section ${si + 1}: ${sec.name}</div>
@@ -635,6 +891,11 @@ function renderExamResult() {
       <div class="section-label">Overall Score</div>
       <div class="big-score">${totalCorrect} / ${totalQuestions}</div>
     </div>
+    <div class="card centered">
+      <div class="section-label">Estimated Math Score</div>
+      <div class="big-score">${scaledScore} <span style="font-size:14px; color:var(--muted); font-weight:600;">/ 800</span></div>
+      <p class="score-disclaimer">Rough estimate from this test's raw score, for motivation and tracking only — not an official score predictor.</p>
+    </div>
     <div class="card">
       <div class="section-label">By section</div>
       <table class="breakdown">
@@ -643,6 +904,10 @@ function renderExamResult() {
           ${sectionsSummary.map(s => `<tr><td>${s.name}</td><td>${s.correct}/${s.total} (${s.attempted}/${s.total} answered)</td></tr>`).join('')}
         </tbody>
       </table>
+    </div>
+    <div class="card">
+      <div class="section-label">Key Takeaways</div>
+      ${renderInsights(takeaways)}
     </div>
     <button class="btn" id="exam-review-toggle">Show Full Answer Review</button>
     <div id="exam-review" style="display:none;"></div>
@@ -661,7 +926,24 @@ function renderExamResult() {
 
 // ---------- Boot ----------
 
-render();
+let resumableExam = null;
+let resumablePractice = null;
+
+async function boot() {
+  await initStats();
+  resumableExam = await getRecord('examProgress');
+  resumablePractice = await getRecord('practiceProgress');
+  render();
+}
+
+boot();
+
+function persistOnHide() {
+  if (state.screen === 'examSection') persistExamProgress();
+  if (state.screen === 'session') persistPracticeProgress();
+}
+window.addEventListener('beforeunload', persistOnHide);
+document.addEventListener('visibilitychange', () => { if (document.hidden) persistOnHide(); });
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
