@@ -63,6 +63,36 @@ h1, h2, h3 { margin: 0 0 8px; }
   color: var(--primary);
 }
 
+.hamburger-btn {
+  background: transparent;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1;
+  width: 40px;
+  height: 40px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.formula-group {
+  margin-bottom: 6px;
+}
+
+.formula-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+}
+.formula-row:last-child { border-bottom: none; }
+.formula-row .fname { color: var(--muted); flex: 1 1 auto; }
+.formula-row .fexpr { font-weight: 700; text-align: right; flex: 1 1 auto; }
+
 .card {
   background: var(--card);
   border: 1px solid var(--border);

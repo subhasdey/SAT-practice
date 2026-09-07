@@ -192,11 +192,167 @@ function render() {
   if (state.screen === 'examSection') return renderExamSection();
   if (state.screen === 'examSectionBreak') return renderExamSectionBreak();
   if (state.screen === 'examResult') return renderExamResult();
+  if (state.screen === 'formulas') return renderFormulas();
 }
 
 function topbar(title) {
-  return `<div class="topbar"><div class="brand">${title}</div></div>`;
+  return `<div class="topbar"><div class="brand">${title}</div><button class="hamburger-btn" id="hamburger-btn" aria-label="Formula reference">☰</button></div>`;
 }
+
+const FORMULA_GROUPS = [
+  {
+    title: 'Area & Perimeter',
+    items: [
+      { name: 'Rectangle area', expr: 'A = l × w' },
+      { name: 'Rectangle perimeter', expr: 'P = 2(l + w)' },
+      { name: 'Triangle area', expr: 'A = ½ × b × h' },
+      { name: 'Trapezoid area', expr: 'A = ½(b₁ + b₂) × h' },
+      { name: 'Circle area', expr: 'A = πr²' },
+      { name: 'Circle circumference', expr: 'C = 2πr' },
+    ],
+  },
+  {
+    title: 'Volume',
+    items: [
+      { name: 'Rectangular prism', expr: 'V = l × w × h' },
+      { name: 'Cylinder', expr: 'V = πr²h' },
+      { name: 'Sphere', expr: 'V = (4/3)πr³' },
+      { name: 'Cone', expr: 'V = (1/3)πr²h' },
+      { name: 'Pyramid', expr: 'V = (1/3) × base area × h' },
+    ],
+  },
+  {
+    title: 'Triangles',
+    items: [
+      { name: 'Pythagorean theorem', expr: 'a² + b² = c²' },
+      { name: '45-45-90 triangle sides', expr: 'x, x, x√2' },
+      { name: '30-60-90 triangle sides', expr: 'x, x√3, 2x' },
+      { name: 'Sum of interior angles', expr: '180°' },
+    ],
+  },
+  {
+    title: 'Coordinate Geometry',
+    items: [
+      { name: 'Slope', expr: 'm = (y₂-y₁) / (x₂-x₁)' },
+      { name: 'Slope-intercept form', expr: 'y = mx + b' },
+      { name: 'Distance formula', expr: 'd = √((x₂-x₁)² + (y₂-y₁)²)' },
+      { name: 'Midpoint formula', expr: '((x₁+x₂)/2, (y₁+y₂)/2)' },
+      { name: 'Circle equation', expr: '(x-h)² + (y-k)² = r²' },
+    ],
+  },
+  {
+    title: 'Algebra',
+    items: [
+      { name: 'Quadratic formula', expr: 'x = (-b ± √(b²-4ac)) / 2a' },
+      { name: 'Difference of squares', expr: 'a² - b² = (a+b)(a-b)' },
+      { name: 'Multiplying exponents', expr: 'aᵐ × aⁿ = aᵐ⁺ⁿ' },
+      { name: 'Dividing exponents', expr: 'aᵐ / aⁿ = aᵐ⁻ⁿ' },
+      { name: 'Power of a power', expr: '(aᵐ)ⁿ = aᵐⁿ' },
+      { name: 'Negative exponent', expr: 'a⁻ⁿ = 1/aⁿ' },
+    ],
+  },
+  {
+    title: 'Circles: Arcs & Sectors',
+    items: [
+      { name: 'Arc length', expr: '(θ/360) × 2πr' },
+      { name: 'Sector area', expr: '(θ/360) × πr²' },
+      { name: 'Full circle in radians', expr: '2π' },
+    ],
+  },
+  {
+    title: 'Statistics & Probability',
+    items: [
+      { name: 'Mean (average)', expr: 'sum of values / count' },
+      { name: 'Probability', expr: 'favorable outcomes / total outcomes' },
+    ],
+  },
+  {
+    title: 'Trigonometry',
+    items: [
+      { name: 'Sine', expr: 'sin θ = opposite / hypotenuse' },
+      { name: 'Cosine', expr: 'cos θ = adjacent / hypotenuse' },
+      { name: 'Tangent', expr: 'tan θ = opposite / adjacent' },
+      { name: 'Pythagorean identity', expr: 'sin²θ + cos²θ = 1' },
+      { name: 'Law of Sines', expr: 'a/sin A = b/sin B = c/sin C' },
+      { name: 'Law of Cosines', expr: 'c² = a² + b² - 2ab·cos C' },
+    ],
+  },
+  {
+    title: 'Logarithms',
+    items: [
+      { name: 'Definition', expr: 'log_b(x) = y  ⟺  bʸ = x' },
+      { name: 'Product rule', expr: 'log_b(xy) = log_b(x) + log_b(y)' },
+      { name: 'Quotient rule', expr: 'log_b(x/y) = log_b(x) - log_b(y)' },
+      { name: 'Power rule', expr: 'log_b(xⁿ) = n · log_b(x)' },
+      { name: 'Change of base', expr: 'log_b(x) = log(x) / log(b)' },
+    ],
+  },
+  {
+    title: 'Sequences & Series',
+    items: [
+      { name: 'nth term, arithmetic', expr: 'aₙ = a₁ + (n-1)d' },
+      { name: 'nth term, geometric', expr: 'aₙ = a₁ · r^(n-1)' },
+      { name: 'Sum, arithmetic series', expr: 'Sₙ = (n/2)(a₁ + aₙ)' },
+      { name: 'Sum, finite geometric series', expr: 'Sₙ = a₁(1-rⁿ)/(1-r), r≠1' },
+      { name: 'Sum, infinite geometric series', expr: 'S = a₁/(1-r), |r|<1' },
+    ],
+  },
+  {
+    title: 'Advanced Algebra',
+    items: [
+      { name: 'Discriminant', expr: 'b² - 4ac' },
+      { name: 'Rational exponent', expr: 'a^(m/n) = ⁿ√(aᵐ)' },
+      { name: 'Imaginary unit', expr: 'i² = -1' },
+      { name: 'Complex conjugate product', expr: '(a+bi)(a-bi) = a² + b²' },
+      { name: 'Remainder theorem', expr: 'f(c) = remainder of f(x) ÷ (x - c)' },
+    ],
+  },
+  {
+    title: 'Function Transformations',
+    items: [
+      { name: 'Vertical shift', expr: 'f(x) + k' },
+      { name: 'Horizontal shift', expr: 'f(x - h)' },
+      { name: 'Vertical stretch/compression', expr: 'a · f(x)' },
+      { name: 'Reflection over x-axis', expr: '-f(x)' },
+      { name: 'Reflection over y-axis', expr: 'f(-x)' },
+    ],
+  },
+];
+
+let screenBeforeFormulas = 'home';
+
+function renderFormulas() {
+  root.innerHTML = `
+    ${topbar('Math Formulas')}
+    <p style="margin:0 0 14px; color:var(--muted); font-size:13px;">
+      Common formulas covered on the SAT Math sections — handy to review before or during practice.
+    </p>
+    ${FORMULA_GROUPS.map(group => `
+      <div class="card formula-group">
+        <div class="section-label">${group.title}</div>
+        ${group.items.map(item => `
+          <div class="formula-row">
+            <span class="fname">${item.name}</span>
+            <span class="fexpr">${item.expr}</span>
+          </div>
+        `).join('')}
+      </div>
+    `).join('')}
+    <button class="btn secondary" id="formulas-back-btn">Back</button>
+  `;
+  document.getElementById('formulas-back-btn').onclick = () => {
+    state.screen = screenBeforeFormulas;
+    render();
+  };
+}
+
+document.addEventListener('click', e => {
+  if (e.target.closest('#hamburger-btn')) {
+    if (state.screen !== 'formulas') screenBeforeFormulas = state.screen;
+    state.screen = 'formulas';
+    render();
+  }
+});
 
 function renderHome() {
   const stats = loadStats();
@@ -417,10 +573,10 @@ function resumePractice() {
 function startTimer() {
   stopTimer();
   state.session.timerHandle = setInterval(() => {
-    const el = document.getElementById('session-timer');
-    if (!el || !state.session) return;
+    if (!state.session) return;
     state.session.elapsed = Math.floor((Date.now() - state.session.startTime) / 1000);
-    el.textContent = formatTime(state.session.elapsed);
+    const el = document.getElementById('session-timer');
+    if (el) el.textContent = formatTime(state.session.elapsed);
   }, 1000);
 }
 
