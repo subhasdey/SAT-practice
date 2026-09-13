@@ -471,7 +471,7 @@ function renderSetup() {
     </div>
     <div class="section-label">Difficulty</div>
     <div class="pill-group" id="difficulty-pills">
-      ${['mixed', 'easy', 'medium', 'hard'].map(d => `
+      ${['mixed', 'easy', 'medium', 'hard', 'ultra'].map(d => `
         <div class="pill ${difficulty === d ? 'active' : ''}" data-value="${d}">
           ${d === 'mixed' ? 'Mixed' : d[0].toUpperCase() + d.slice(1)}
         </div>`).join('')}
