@@ -1020,15 +1020,15 @@ function finishExam() {
   stats.sessions = stats.sessions.slice(0, 20);
   saveStats(stats);
 
-  exam.summary = { sectionsSummary, totalCorrect, totalQuestions: exam.sections.reduce((a, s) => a + s.questions.length, 0) };
+  exam.summary = { sectionsSummary, totalCorrect, totalAttempted, totalQuestions: exam.sections.reduce((a, s) => a + s.questions.length, 0) };
   state.screen = 'examResult';
   render();
 }
 
 function renderExamResult() {
   const exam = state.exam;
-  const { sectionsSummary, totalCorrect, totalQuestions } = exam.summary;
-  const scaledScore = estimateScaledScore(totalCorrect / totalQuestions);
+  const { sectionsSummary, totalCorrect, totalAttempted, totalQuestions } = exam.summary;
+  const scaledScore = totalAttempted > 0 ? estimateScaledScore(totalCorrect / totalQuestions) : null;
   const takeaways = examInsights(sectionsSummary);
 
   const reviewHtml = exam.sections.map((sec, si) => `
@@ -1064,8 +1064,8 @@ function renderExamResult() {
     </div>
     <div class="card centered">
       <div class="section-label">Estimated Math Score</div>
-      <div class="big-score">${scaledScore} <span style="font-size:14px; color:var(--muted); font-weight:600;">/ 800</span></div>
-      <p class="score-disclaimer">Rough estimate from this test's raw score, for motivation and tracking only — not an official score predictor.</p>
+      <div class="big-score">${scaledScore !== null ? scaledScore : '—'} <span style="font-size:14px; color:var(--muted); font-weight:600;">/ 800</span></div>
+      <p class="score-disclaimer">${scaledScore !== null ? "Rough estimate from this test's raw score, for motivation and tracking only — not an official score predictor." : 'No questions were answered, so there\'s no score to estimate.'}</p>
     </div>
     <div class="card">
       <div class="section-label">By section</div>
