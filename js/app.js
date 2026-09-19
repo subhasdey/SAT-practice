@@ -631,6 +631,34 @@ function renderSession() {
   };
   document.getElementById('next-btn').onclick = () => nextQuestion();
   document.getElementById('quit-btn').onclick = () => endSession();
+
+  // If this question was already answered before the app was closed/reloaded
+  // (resumed session), re-apply the answered state instead of leaving the
+  // choices looking fresh and clickable but silently inert.
+  if (s.answered) {
+    showAnsweredState(q, s.selectedIndex);
+  }
+}
+
+// Applies the post-answer visuals (highlighting, explanation, Next button)
+// without touching score/stats — used both right after answering and when
+// re-rendering a resumed session on a question that was already answered.
+function showAnsweredState(q, selectedIndex) {
+  const correct = selectedIndex === q.answer;
+  const buttons = document.querySelectorAll('#choices .choice');
+  buttons.forEach((btn, i) => {
+    btn.setAttribute('disabled', 'true');
+    if (i === q.answer) btn.classList.add('correct');
+    else if (i === selectedIndex) btn.classList.add('wrong');
+  });
+
+  document.getElementById('explanation-slot').innerHTML = `
+    <div class="explanation">
+      <span class="label">${correct ? 'Correct!' : 'Explanation'}</span>
+      ${q.explanation}
+    </div>
+  `;
+  document.getElementById('next-btn').style.display = 'block';
 }
 
 function answerQuestion(selectedIndex) {
@@ -647,20 +675,7 @@ function answerQuestion(selectedIndex) {
   recordAnswer(stats, q, correct);
   saveStats(stats);
 
-  const buttons = document.querySelectorAll('#choices .choice');
-  buttons.forEach((btn, i) => {
-    btn.setAttribute('disabled', 'true');
-    if (i === q.answer) btn.classList.add('correct');
-    else if (i === selectedIndex) btn.classList.add('wrong');
-  });
-
-  document.getElementById('explanation-slot').innerHTML = `
-    <div class="explanation">
-      <span class="label">${correct ? 'Correct!' : 'Explanation'}</span>
-      ${q.explanation}
-    </div>
-  `;
-  document.getElementById('next-btn').style.display = 'block';
+  showAnsweredState(q, selectedIndex);
   persistPracticeProgress();
 }
 
